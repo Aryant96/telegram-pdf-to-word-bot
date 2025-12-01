@@ -1,12 +1,14 @@
 import os
 import requests
+import pytesseract
+from pdf2image import convert_from_bytes
 from docx import Document
-from openai import OpenAI
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+# زبان OCR (مثلاً "eng" یا "fas" یا "fas+eng")
+TESS_LANG = os.getenv("TESSERACT_LANG", "eng")
 
 
 def send_message(chat_id, text):
@@ -18,8 +20,9 @@ def send_message(chat_id, text):
 
 async def handle_ocr_pdf(chat_id: int, file_id: str):
     """
-    یک PDF (اسکن / عکس‌دار) می‌گیرد، متن تایپی استخراج می‌کند
-    و به صورت فایل Word برای کاربر می‌فرستد.
+    یک PDF اسکن‌شده (یا عکس‌دار) می‌گیرد،
+    متن را با Tesseract استخراج می‌کند
+    و خروجی را به صورت Word برای کاربر می‌فرستد.
     """
     try:
         # 1) گرفتن لینک فایل از تلگرام
@@ -33,64 +36,50 @@ async def handle_ocr_pdf(chat_id: int, file_id: str):
 
         pdf_bytes = requests.get(file_url).content
 
-        # 2) آپلود PDF به OpenAI
-        upload = client.files.create(
-            file=("scan.pdf", pdf_bytes),
-            purpose="user_data",
-        )
+        send_message(chat_id, "در حال تبدیل صفحات PDF به تصویر هستم... ⏳")
 
-        send_message(chat_id, "در حال خواندن متن از روی PDF اسکن شده هستم... ⏳")
+        # 2) تبدیل PDF به تصاویر
+        pages = convert_from_bytes(pdf_bytes)
 
-        # 3) درخواست به مدل برای استخراج متن تایپی
-        resp = client.responses.create(
-            model="gpt-4o",
-            input=[
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_file",
-                            "file_id": upload.id,
-                        },
-                        {
-                            "type": "input_text",
-                            "text": (
-                                "این فایل احتمالاً اسکن یا شامل متن به صورت تصویر است. "
-                                "لطفاً تمام متن قابل خواندن را به صورت تایپی و مرتب استخراج کن. "
-                                "خطوط را به ترتیب خواندن و بدون توضیح اضافی برگردان."
-                            ),
-                        },
-                    ],
-                }
-            ],
-            max_output_tokens=4000,
-        )
-
-        # توجه: ساختار دقیق خروجی ممکن است کمی فرق کند؛ این شکل رایج است
-        try:
-            extracted_text = resp.output[0].content[0].text
-        except Exception:
-            # اگر ساختار کمی فرق کرد، کل response را string می‌کنیم
-            extracted_text = str(resp)
-
-        if not extracted_text.strip():
+        if not pages:
             send_message(
                 chat_id,
-                "نتونستم متنی از این PDF دربیارم 😕\n"
-                "ممکنه کیفیت اسکن خیلی پایین باشه."
+                "نتونستم هیچ صفحه‌ای از این PDF بخونم 😕"
             )
             return
 
-        # 4) ساخت فایل Word
+        send_message(chat_id, "در حال خواندن متن از روی تصاویر (OCR)... ⏳")
+
+        full_text = ""
+
+        for i, img in enumerate(pages, start=1):
+            try:
+                text = pytesseract.image_to_string(img, lang=TESS_LANG)
+            except Exception as e:
+                print("ERROR in pytesseract:", e)
+                text = ""
+
+            if text.strip():
+                full_text += f"\n\n--- صفحه {i} ---\n\n"
+                full_text += text
+
+        if not full_text.strip():
+            send_message(
+                chat_id,
+                "متنی نتونستم از این PDF اسکن‌شده استخراج کنم 😕\n"
+                "ممکنه کیفیت اسکن پایین باشه یا Tesseract روی سرور درست نصب نشده باشه."
+            )
+            return
+
+        # 3) ساخت Word
         doc = Document()
-        for line in extracted_text.split("\n"):
-            if line.strip():
-                doc.add_paragraph(line)
+        for line in full_text.split("\n"):
+            doc.add_paragraph(line)
 
         filename = "ocr_converted.docx"
         doc.save(filename)
 
-        # 5) ارسال Word به کاربر
+        # 4) ارسال Word به کاربر
         with open(filename, "rb") as f:
             requests.post(
                 f"{TELEGRAM_API}/sendDocument",
@@ -103,5 +92,5 @@ async def handle_ocr_pdf(chat_id: int, file_id: str):
         send_message(
             chat_id,
             "در تبدیل اسکن به متن تایپی یه خطای غیرمنتظره پیش اومد 😔\n"
-            "بعداً دوباره امتحان کن یا یک فایل دیگه بفرست."
+            "ممکنه نیاز باشه Tesseract روی سرور درست نصب/تنظیم بشه."
         )
