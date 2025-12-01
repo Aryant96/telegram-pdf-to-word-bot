@@ -1,6 +1,5 @@
 import os
 import requests
-from modules.ocr_cleaner import handle_ocr_pdf
 from fastapi import FastAPI, Request
 
 from modules.pdf_to_word import handle_pdf_to_word
@@ -9,21 +8,22 @@ from modules.summary import (
     handle_summary_word,
     handle_summary_text,
 )
+from modules.ocr_cleaner import handle_ocr_pdf
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = FastAPI()
 
-# حالت کاربر
-# {chat_id: "WORD" | "SUMMARY_PDF" | "SUMMARY_WORD" | "SUMMARY_TEXT" | None}
+# حالت کاربر:
+# {chat_id: "WORD" | "SUMMARY_PDF" | "SUMMARY_WORD" | "SUMMARY_TEXT" | "OCR_PDF" | None}
 user_state = {}
 
 # وضعیت دسترسی کاربران:
 # { user_id: {"free_used": bool, "paid_remaining": int} }
 user_access = {}
 
-# آی‌دی تلگرام ادمین
+# آی‌دی تلگرام ادمین (خودت) - باید در Environment تنظیم شده باشد
 ADMIN_ID = int(os.getenv("TELEGRAM_ADMIN_ID", "0"))
 
 
@@ -53,7 +53,10 @@ async def telegram_webhook(req: Request):
 
         parts = text.split()
         if len(parts) != 3:
-            send_message(chat_id, "فرمت درست:\n/credit USER_ID COUNT\nمثال:\n/credit 123456789 10")
+            send_message(
+                chat_id,
+                "فرمت درست:\n/credit USER_ID COUNT\nمثال:\n/credit 123456789 10",
+            )
             return {"ok": True}
 
         try:
@@ -63,11 +66,16 @@ async def telegram_webhook(req: Request):
             send_message(chat_id, "USER_ID و COUNT باید عددی باشند.")
             return {"ok": True}
 
-        info = user_access.setdefault(target_id, {"free_used": True, "paid_remaining": 0})
+        info = user_access.setdefault(
+            target_id, {"free_used": True, "paid_remaining": 0}
+        )
         info["paid_remaining"] += count
-        info["free_used"] = True
+        info["free_used"] = True  # یعنی رایگانش را مصرف شده فرض می‌کنیم
 
-        send_message(chat_id, f"برای کاربر {target_id} تعداد {count} اعتبار اضافه شد ✅")
+        send_message(
+            chat_id,
+            f"برای کاربر {target_id} تعداد {count} اعتبار اضافه شد ✅",
+        )
         return {"ok": True}
 
     if text and text.startswith("/me"):
@@ -89,30 +97,49 @@ async def telegram_webhook(req: Request):
     # ---------- انتخاب از منو ----------
     if text == "📄 PDF → Word":
         user_state[chat_id] = "WORD"
-        send_message(chat_id, "حالت «PDF → Word» انتخاب شد ✅\nلطفاً فایل PDF را بفرست.")
+        send_message(
+            chat_id,
+            "حالت «PDF → Word» انتخاب شد ✅\nلطفاً فایل PDF را بفرست.",
+        )
         return {"ok": True}
 
     if text == "🧾 خلاصه PDF":
         user_state[chat_id] = "SUMMARY_PDF"
-        send_message(chat_id, "حالت «خلاصه PDF» انتخاب شد ✅\nلطفاً فایل PDF را بفرست.")
+        send_message(
+            chat_id,
+            "حالت «خلاصه PDF» انتخاب شد ✅\nلطفاً فایل PDF را بفرست.",
+        )
         return {"ok": True}
 
     if text == "📑 خلاصه Word":
         user_state[chat_id] = "SUMMARY_WORD"
-        send_message(chat_id, "حالت «خلاصه Word» انتخاب شد ✅\nلطفاً فایل Word را بفرست.")
+        send_message(
+            chat_id,
+            "حالت «خلاصه Word» انتخاب شد ✅\nلطفاً فایل Word را بفرست.",
+        )
         return {"ok": True}
 
     if text == "✍ خلاصه متن":
         user_state[chat_id] = "SUMMARY_TEXT"
-        send_message(chat_id, "حالت «خلاصه متن» انتخاب شد ✅\nمتن خودت رو اینجا پیست کن تا خلاصه کنم.")
+        send_message(
+            chat_id,
+            "حالت «خلاصه متن» انتخاب شد ✅\nمتن خودت رو اینجا پیست کن تا خلاصه کنم.",
+        )
+        return {"ok": True}
+
+    if text == "🔤 تبدیل اسکن به متن (PDF)":
+        user_state[chat_id] = "OCR_PDF"
+        send_message(
+            chat_id,
+            "حالت «تبدیل اسکن به متن تایپی (PDF → Word تایپی)» فعال شد ✅\n"
+            "لطفاً فایل PDF اسکن‌شده یا عکس‌دار را بفرست.",
+        )
         return {"ok": True}
 
     mode = user_state.get(chat_id)
 
     # ---------- خلاصه متن (بدون فایل) ----------
-    # اگر در حالت SUMMARY_TEXT هستیم و یک متن معمولی آمد (نه دستور، نه دکمه)
     if mode == "SUMMARY_TEXT" and text and not text.startswith("/"):
-        # چک دسترسی
         allowed, source = check_access(user_id)
         if not allowed:
             send_no_access_message(chat_id)
@@ -127,7 +154,7 @@ async def telegram_webhook(req: Request):
         mime = document.get("mime_type", "")
         file_id = document["file_id"]
 
-        # PDF
+        # ===== PDF ها =====
         if mime == "application/pdf":
             # PDF → Word
             if mode == "WORD":
@@ -136,7 +163,10 @@ async def telegram_webhook(req: Request):
                     send_no_access_message(chat_id)
                     return {"ok": True}
 
-                send_message(chat_id, "در حال تبدیل PDF به Word هستم، چند لحظه صبر کن... ⏳")
+                send_message(
+                    chat_id,
+                    "در حال تبدیل PDF به Word هستم، چند لحظه صبر کن... ⏳",
+                )
                 await handle_pdf_to_word(chat_id, file_id)
                 register_use(user_id, source)
                 return {"ok": True}
@@ -152,16 +182,27 @@ async def telegram_webhook(req: Request):
                 register_use(user_id, source)
                 return {"ok": True}
 
-            # اگر حالت انتخاب نشده
+            # OCR PDF → Word تایپی
+            if mode == "OCR_PDF":
+                allowed, source = check_access(user_id)
+                if not allowed:
+                    send_no_access_message(chat_id)
+                    return {"ok": True}
+
+                await handle_ocr_pdf(chat_id, file_id)
+                register_use(user_id, source)
+                return {"ok": True}
+
+            # اگر حالت مشخص نشده بود
             send_message(
                 chat_id,
                 "مشخص نکردی با این PDF چه کاری انجام بدم.\n"
-                "از منو یکی از گزینه‌ها رو انتخاب کن 🌱"
+                "از منو یکی از گزینه‌ها رو انتخاب کن 🌱",
             )
             send_main_menu(chat_id)
             return {"ok": True}
 
-        # Word (docx)
+        # ===== Word (docx) =====
         if mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
             if mode == "SUMMARY_WORD":
                 allowed, source = check_access(user_id)
@@ -175,19 +216,22 @@ async def telegram_webhook(req: Request):
 
             send_message(
                 chat_id,
-                "برای خلاصه‌کردن Word، اول از منو گزینه «📑 خلاصه Word» رو انتخاب کن."
+                "برای خلاصه‌کردن Word، اول از منو گزینه «📑 خلاصه Word» رو انتخاب کن.",
             )
             return {"ok": True}
 
         # سایر فایل‌ها
-        send_message(chat_id, "این نوع فایل را پشتیبانی نمی‌کنم. فقط PDF و Word (docx) را بفرست.")
+        send_message(
+            chat_id,
+            "این نوع فایل را پشتیبانی نمی‌کنم. فقط PDF و Word (docx) را بفرست.",
+        )
         return {"ok": True}
 
     # ---------- سایر متن‌ها ----------
     if text:
         send_message(
             chat_id,
-            "برای شروع /start را بزن و از منو یکی از حالت‌ها را انتخاب کن 🌱"
+            "برای شروع /start را بزن و از منو یکی از حالت‌ها را انتخاب کن 🌱",
         )
 
     return {"ok": True}
@@ -196,7 +240,7 @@ async def telegram_webhook(req: Request):
 def send_message(chat_id, text):
     requests.post(f"{TELEGRAM_API}/sendMessage", json={
         "chat_id": chat_id,
-        "text": text
+        "text": text,
     })
 
 
@@ -213,30 +257,43 @@ def send_main_menu(chat_id):
             [
                 {"text": "✍ خلاصه متن"},
             ],
+            [
+                {"text": "🔤 تبدیل اسکن به متن (PDF)"},
+            ],
         ],
-        "resize_keyboard": True
+        "resize_keyboard": True,
     }
 
     requests.post(f"{TELEGRAM_API}/sendMessage", json={
         "chat_id": chat_id,
         "text": "سلام 👋\nیکی از گزینه‌ها را انتخاب کن:",
-        "reply_markup": keyboard
+        "reply_markup": keyboard,
     })
 
 
 def check_access(user_id: int):
+    """
+    برمی‌گردونه:
+    (allowed: bool, source: 'FREE' | 'PAID' | None)
+    """
     info = user_access.get(user_id, {"free_used": False, "paid_remaining": 0})
 
+    # هنوز استفاده رایگان نکرده
     if not info["free_used"]:
         return True, "FREE"
 
+    # استفاده رایگان کرده و اعتبار پولی دارد
     if info["paid_remaining"] > 0:
         return True, "PAID"
 
+    # هیچ دسترسی ندارد
     return False, None
 
 
 def register_use(user_id: int, source: str):
+    """
+    بعد از هر استفاده موفق صدا زده می‌شود.
+    """
     info = user_access.setdefault(user_id, {"free_used": False, "paid_remaining": 0})
 
     if source == "FREE":
@@ -250,6 +307,5 @@ def send_no_access_message(chat_id: int):
         chat_id,
         "سهمیه استفاده‌ات تموم شده ❌\n"
         "یک بار استفاده رایگان داشتی که مصرف شده.\n"
-        "برای فعال‌سازی دوباره، با ادمین در ارتباط باش 🌱"
+        "برای فعال‌سازی دوباره، با ادمین در ارتباط باش 🌱",
     )
-
