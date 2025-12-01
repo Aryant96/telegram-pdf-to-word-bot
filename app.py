@@ -1,5 +1,6 @@
 import os
 import requests
+from modules.ocr_cleaner import handle_ocr_pdf
 from fastapi import FastAPI, Request
 
 from modules.pdf_to_word import handle_pdf_to_word
@@ -251,3 +252,4 @@ def send_no_access_message(chat_id: int):
         "یک بار استفاده رایگان داشتی که مصرف شده.\n"
         "برای فعال‌سازی دوباره، با ادمین در ارتباط باش 🌱"
     )
+
