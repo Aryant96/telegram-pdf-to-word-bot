@@ -43,7 +43,7 @@ async def handle_ocr_pdf(chat_id: int, file_id: str):
 
         # 3) درخواست به مدل برای استخراج متن تایپی
         resp = client.responses.create(
-            model="gpt-4o-mini",
+            model="gpt-4o",
             input=[
                 {
                     "role": "user",
