@@ -3,4 +3,6 @@ uvicorn
 requests
 pypdf2
 python-docx
-openai
+pytesseract
+pdf2image
+Pillow
