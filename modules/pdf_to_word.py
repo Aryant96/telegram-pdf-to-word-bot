@@ -8,6 +8,13 @@ BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 
+def send_message(chat_id, text):
+    requests.post(f"{TELEGRAM_API}/sendMessage", json={
+        "chat_id": chat_id,
+        "text": text
+    })
+
+
 async def handle_pdf_to_word(chat_id: int, file_id: str):
     try:
         # 1) گرفتن لینک فایل از تلگرام
@@ -19,21 +26,20 @@ async def handle_pdf_to_word(chat_id: int, file_id: str):
         file_path = file_info["result"]["file_path"]
         file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
 
-        # 2) دانلود pdf
+        # 2) دانلود PDF
         pdf_bytes = requests.get(file_url).content
         pdf_filename = "input.pdf"
         with open(pdf_filename, "wb") as f:
             f.write(pdf_bytes)
 
-        # 3) تلاش برای خواندن PDF
+        # 3) خواندن PDF
         try:
             reader = PdfReader(pdf_filename)
         except PdfReadError:
             send_message(
                 chat_id,
                 "نتونستم این PDF رو بخونم 😕\n"
-                "یا فایل خراب شده، یا فرمتش استاندارد نیست.\n"
-                "اگه می‌تونی یه PDF دیگه (یا ورژن دیگه همین فایل) بفرست."
+                "یا خراب شده، یا فرمتش عجیبه. لطفاً یک فایل دیگه امتحان کن."
             )
             return
 
@@ -46,7 +52,7 @@ async def handle_pdf_to_word(chat_id: int, file_id: str):
             send_message(
                 chat_id,
                 "متنی داخل این PDF پیدا نکردم 😕\n"
-                "احتمالاً اسکن/عکس هست. بعداً نسخه OCR (تشخیص متن از تصویر) رو اضافه می‌کنیم."
+                "احتمالاً اسکن/عکس هست. می‌تونی از گزینه «تبدیل اسکن به متن» استفاده کنی."
             )
             return
 
@@ -59,26 +65,18 @@ async def handle_pdf_to_word(chat_id: int, file_id: str):
         doc_filename = "converted.docx"
         doc.save(doc_filename)
 
-        # 5) ارسال فایل Word به کاربر
+        # 5) ارسال Word به کاربر
         with open(doc_filename, "rb") as f:
             requests.post(
                 f"{TELEGRAM_API}/sendDocument",
                 data={"chat_id": chat_id},
-                files={"document": ("converted.docx", f)}
+                files={"document": ("converted.docx", f)},
             )
 
     except Exception as e:
-        # هر خطای غیرمنتظره‌ای بیاد، اینجا می‌گیریم تا 500 نده
         print("ERROR in handle_pdf_to_word:", e)
         send_message(
             chat_id,
             "یه خطای غیرمنتظره پیش اومد 😔\n"
-            "یه کم بعد دوباره امتحان کن، یا یه PDF دیگه بفرست."
+            "یه کم بعد دوباره امتحان کن یا یک PDF دیگه بفرست."
         )
-
-
-def send_message(chat_id, text):
-    requests.post(f"{TELEGRAM_API}/sendMessage", json={
-        "chat_id": chat_id,
-        "text": text
-    })
